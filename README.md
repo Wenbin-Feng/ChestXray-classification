@@ -67,6 +67,10 @@ python train.py
 ```bash
 python val.py
 ```
+推理单张图片类别：
+```bash
+python inference.py
+```
 ## 数据集引用
 如在您的研究中使用该数据集，请引用如下：
 ```bibtex
