@@ -1,0 +1,33 @@
+{
+    "classes": [],
+    "tags": [
+        {
+            "name": "NORMAL",
+            "value_type": "none",
+            "color": "#3E0F8A",
+            "id": 28011,
+            "hotkey": "",
+            "applicable_type": "all",
+            "classes": []
+        },
+        {
+            "name": "PNEUMONIA_BACTERIA",
+            "value_type": "none",
+            "color": "#7E0F8A",
+            "id": 28012,
+            "hotkey": "",
+            "applicable_type": "all",
+            "classes": []
+        },
+        {
+            "name": "PNEUMONIA_VIRUS",
+            "value_type": "none",
+            "color": "#2A8A0F",
+            "id": 28013,
+            "hotkey": "",
+            "applicable_type": "all",
+            "classes": []
+        }
+    ],
+    "projectType": "images"
+}

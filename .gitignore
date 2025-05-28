@@ -1,0 +1,50 @@
+# Python 缓存
+__pycache__/
+*.py[cod]
+*.so
+*.pyd
+*.pyo
+
+# Jupyter Notebook 检查点
+.ipynb_checkpoints/
+
+# VSCode 配置
+.vscode/
+*.code-workspace
+
+# 环境/依赖
+.env
+.venv/
+env/
+venv/
+*.env
+
+# 数据/模型/输出
+*.ckpt
+*.pth
+*.pt
+*.npz
+*.npy
+*.h5
+output/
+runs/
+logs/
+checkpoints/
+cache/
+tmp/
+temp/
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
+
+# 其它
+*.tar
+*.zip
+*.bak
+*.swp
+*.swo
+
+# 不上传数据集原始大文件（如有）
+ChexRay
+cat_dog/
