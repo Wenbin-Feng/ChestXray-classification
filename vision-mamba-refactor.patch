@@ -1,0 +1,1650 @@
+From c9e1c0185a316fe93570274cc0c06a89b18a0b7e Mon Sep 17 00:00:00 2001
+From: Rin <rin@openclaw.ai>
+Date: Tue, 17 Mar 2026 02:46:48 +0000
+Subject: [PATCH] feat: Add Vision Mamba support and refactor project structure
+
+- Add Vision Mamba model implementation (pure PyTorch)
+- Keep ViT support with model factory pattern
+- Add Pydantic Settings for configuration management
+- Refactor project structure: config/, models/, utils/, scripts/
+- Add unified training/validation/inference scripts
+- Add .env.example and requirements.txt
+- Update README with new features and usage
+- Remove outdated test.py
+
+Models can be switched via MODEL_TYPE env variable:
+  MODEL_TYPE=vit python scripts/train.py
+  MODEL_TYPE=mamba python scripts/train.py
+---
+ .env.example               |  38 +++++
+ README.md                  | 186 +++++++++++++++-------
+ config/__init__.py         | 134 ++++++++++++++++
+ models/__init__.py         |  53 +++++++
+ models/mamba_classifier.py | 309 +++++++++++++++++++++++++++++++++++++
+ models/vit_classifier.py   |  60 +++++++
+ requirements.txt           |  22 +++
+ scripts/inference.py       |  79 ++++++++++
+ scripts/train.py           |  76 +++++++++
+ scripts/validate.py        |  68 ++++++++
+ test.py                    |  20 ---
+ utils/__init__.py          |  13 ++
+ utils/data.py              | 160 +++++++++++++++++++
+ utils/training.py          | 272 ++++++++++++++++++++++++++++++++
+ 14 files changed, 1418 insertions(+), 72 deletions(-)
+ create mode 100644 .env.example
+ create mode 100644 config/__init__.py
+ create mode 100644 models/__init__.py
+ create mode 100644 models/mamba_classifier.py
+ create mode 100644 models/vit_classifier.py
+ create mode 100644 requirements.txt
+ create mode 100644 scripts/inference.py
+ create mode 100644 scripts/train.py
+ create mode 100644 scripts/validate.py
+ delete mode 100644 test.py
+ create mode 100644 utils/__init__.py
+ create mode 100644 utils/data.py
+ create mode 100644 utils/training.py
+
+diff --git a/.env.example b/.env.example
+new file mode 100644
+index 0000000..33f7089
+--- /dev/null
++++ b/.env.example
+@@ -0,0 +1,38 @@
++# Model Configuration
++MODEL_TYPE=vit
++MODEL_NUM_CLASSES=3
++MODEL_IMG_SIZE=224
++MODEL_PRETRAINED=true
++
++# ViT Specific
++MODEL_VIT_PATCH_SIZE=16
++MODEL_VIT_EMBED_DIM=768
++MODEL_VIT_DEPTH=12
++MODEL_VIT_NUM_HEADS=12
++
++# Mamba Specific
++MODEL_MAMBA_D_MODEL=768
++MODEL_MAMBA_N_LAYER=12
++MODEL_MAMBA_D_STATE=16
++MODEL_MAMBA_D_CONV=4
++MODEL_MAMBA_EXPAND=2
++
++# Training Configuration
++TRAIN_BATCH_SIZE=32
++TRAIN_NUM_EPOCHS=10
++TRAIN_LEARNING_RATE=0.0003
++TRAIN_WEIGHT_DECAY=0.0001
++TRAIN_NUM_WORKERS=4
++TRAIN_SAVE_DIR=./checkpoints
++
++# Data Configuration
++DATA_TRAIN_DIR=/home/ubuntu/DETR/5.06组会/ChexRay/train/img
++DATA_TEST_DIR=/home/ubuntu/DETR/5.06组会/ChexRay/test/img
++# DATA_VAL_DIR=/path/to/validation
++
++# Device Configuration
++DEVICE_TYPE=auto
++
++# App Configuration
++SEED=42
++DEBUG=false
+diff --git a/README.md b/README.md
+index 6b7d778..8688870 100644
+--- a/README.md
++++ b/README.md
+@@ -1,78 +1,160 @@
+-# 大型OCT与胸部X光图像标注数据集——肺炎分类项目
++# 胸部X光图像分类系统
+ 
+-本项目基于 ZhangLabData: Chest X-Ray 数据集，旨在实现对胸部X光图像的肺炎自动分类。项目包含数据预处理、模型训练、推理与结果可视化等完整流程，适用于医学影像智能诊断相关研究与应用。
++基于深度学习（ViT / Vision Mamba）的肺炎自动分类系统，支持环境变量配置和规范化项目结构。
+ 
+-## 数据集简介
+-- The authors of the ZhanLabData: Large Dataset of Labeled Optical Coherence Tomography (OCT) and Chest X-Ray Images addressed challenges related to reliability and interpretability in the implementation of clinical-decision support algorithms for medical imaging. The Chest XRay part has a total of 5,856 patients contributed to the dataset, with 4,273 images characterized as depicting PNEUMONIA_BACTERIA and PNEUMONIA_VIRUS (rest - NORMAL images). They established a diagnostic tool based on a deep-learning framework specifically designed for the screening of patients with common treatable blinding retinal diseases.
+-- **数据集来源**：[ZhangLabData: Chest X-Ray](https://datasetninja.com/zhang-lab-data-chest-xray)
+-- **数据类型**：胸部X光图像，带有标注
+-- **任务类型**：分类（如正常/肺炎）
++## 新特性
+ 
+-## 项目功能
+-
+-- 数据预处理与增强
+-- 基于ViT等主流模型的肺炎分类模型训练
+-- 支持模型评估与推理
+-- 结果可视化
+-
+-## 项目结构
++- ✅ **双架构支持**: Vision Transformer (ViT) 和 Vision Mamba
++- ✅ **Pydantic Settings**: 环境变量注入配置
++- ✅ **规范化结构**: 模块化设计，易于扩展
++- ✅ **统一训练流程**: 自动验证、指标追踪、模型保存
+ 
+ ## 项目结构
+ 
+-```text
++```
+ .
+-├── datahelper.py
+-├── model.py
+-├── test.py
+-├── train.py
+-├── val.py
+-├── inference.py
+-├── Vit.py
+-└── ChexRay/
+-    ├── train/
+-    │   └── img/
+-    │       ├── BACTERIA-7422-0001.jpeg
+-    │       ├── BACTERIA-7422-0002.jpeg
+-    │       ├── VIRUS-1234-0001.jpeg
+-    │       ├── NORMAL-5678-0001.jpeg
+-    │       └── ...（更多图片）
+-    └── test/
+-        └── img/
+-            ├── BACTERIA-8000-0001.jpeg
+-            ├── VIRUS-2000-0001.jpeg
+-            ├── NORMAL-9000-0001.jpeg
+-            └── ...（更多图片）
++├── config/                 # 配置管理
++│   └── __init__.py        # Pydantic Settings
++├── models/                 # 模型定义
++│   ├── __init__.py        # 模型工厂
++│   ├── vit_classifier.py  # ViT分类器
++│   └── mamba_classifier.py # Vision Mamba分类器
++├── utils/                  # 工具函数
++│   ├── data.py            # 数据集和数据加载
++│   └── training.py        # 训练和推理工具
++├── scripts/                # 可执行脚本
++│   ├── train.py           # 训练脚本
++│   ├── validate.py        # 验证脚本
++│   └── inference.py       # 推理脚本
++├── .env.example           # 环境变量示例
++├── datahelper.py          # 旧版数据工具（兼容）
++├── model.py               # 旧版模型（兼容）
++├── train.py               # 旧版训练脚本（兼容）
++├── val.py                 # 旧版验证脚本（兼容）
++├── inference.py           # 旧版推理脚本（兼容）
++├── Vit.py                 # 原始ViT实现
++└── README.md              # 本文档
+ ```
+ 
+ ## 快速开始
+ 
+-1. 克隆本仓库并安装依赖
+-2. 下载并解压数据集到指定目录
+-3. 运行训练脚本进行模型训练
+-4. 使用测试脚本进行推理和评估
++### 1. 配置环境变量
+ 
+-## 依赖环境
++```bash
++cp .env.example .env
++# 编辑 .env 文件，修改数据路径等配置
++```
+ 
+-请参考 `requirements.txt` 安装所需依赖：
++### 2. 使用新架构训练
+ 
+ ```bash
+-pip install -r requirements.txt
++# 使用 ViT 训练（默认）
++python scripts/train.py
++
++# 使用 Vision Mamba 训练
++MODEL_TYPE=mamba python scripts/train.py
++
++# 自定义训练参数
++MODEL_TYPE=vit TRAIN_NUM_EPOCHS=20 TRAIN_BATCH_SIZE=16 python scripts/train.py
+ ```
+-开始训练前请修改对应数据集路径
++
++### 3. 验证模型
+ 
+ ```bash
+-python train.py
++# 验证默认模型
++python scripts/validate.py
++
++# 验证 Mamba 模型
++MODEL_TYPE=mamba python scripts/validate.py
+ ```
+-测试训练效果：
++
++### 4. 推理单张图片
++
+ ```bash
+-python val.py
++python scripts/inference.py --image /path/to/image.jpg
+ ```
+-推理单张图片类别：
++
++## 配置说明
++
++所有配置通过环境变量管理，支持 `.env` 文件:
++
++| 变量名 | 说明 | 默认值 |
++|--------|------|--------|
++| `MODEL_TYPE` | 模型类型: `vit` 或 `mamba` | `vit` |
++| `MODEL_NUM_CLASSES` | 分类类别数 | `3` |
++| `MODEL_IMG_SIZE` | 输入图像尺寸 | `224` |
++| `TRAIN_NUM_EPOCHS` | 训练轮数 | `10` |
++| `TRAIN_BATCH_SIZE` | 批次大小 | `32` |
++| `TRAIN_LEARNING_RATE` | 学习率 | `3e-4` |
++| `DATA_TRAIN_DIR` | 训练数据目录 | - |
++| `DATA_TEST_DIR` | 测试数据目录 | - |
++| `DEVICE_TYPE` | 设备: `cuda`, `cpu`, `auto` | `auto` |
++
++## 模型对比
++
++| 特性 | ViT | Vision Mamba |
++|------|-----|--------------|
++| 架构基础 | Transformer | State Space Model |
++| 计算复杂度 | O(n²) | O(n) |
++| 长序列效率 | 较低 | 更高 |
++| 实现依赖 | transformers | 纯 PyTorch |
++| 预训练权重 | 可用 | 需从头训练 |
++
++## 依赖安装
++
+ ```bash
+-python inference.py
++# 核心依赖
++pip install torch torchvision
++pip install transformers
++pip install pydantic-settings
++pip install scikit-learn
++pip install pillow
++
++# 可选: 如果使用原始 mamba_ssm
++# pip install mamba-ssm
++```
++
++## 旧版兼容
++
++保留了原始文件以确保向后兼容:
++- `model.py` - 原始模型定义
++- `train.py` - 原始训练脚本
++- `val.py` - 原始验证脚本
++- `datahelper.py` - 原始数据工具
++
++## 技术细节
++
++### Vision Mamba 实现
++
++基于选择性状态空间模型 (Selective State Space Model) 的视觉骨干网络:
++
++- **Patch Embedding**: 将图像分割为 16x16 patches
++- **Mamba Blocks**: 使用选择性 SSM 替代自注意力
++- **线性复杂度**: 序列长度呈线性增长，适合高分辨率图像
++
++### Pydantic Settings
++
++类型安全的配置管理，自动从环境变量加载:
++
++```python
++from config import config
++
++# 访问配置
++print(config.model.type)       # "vit" 或 "mamba"
++print(config.device.device)    # "cuda" 或 "cpu"
++print(config.train.batch_size) # 32
+ ```
+-## 数据集引用
+-如在您的研究中使用该数据集，请引用如下：
++
++## 数据集
++
++使用 [ZhangLabData: Chest X-Ray](https://datasetninja.com/zhang-lab-data-chest-xray) 数据集:
++
++- 总计 5,856 张图像
++- 类别: NORMAL, BACTERIA, VIRUS
++- 训练集/测试集已划分
++
++## 引用
++
+ ```bibtex
+ @misc{ visualization-tools-for-zhang-lab-data-chest-xray-dataset,
+   title = { Visualization Tools for ZhangLabData: Chest X-Ray Dataset },
+diff --git a/config/__init__.py b/config/__init__.py
+new file mode 100644
+index 0000000..f6333bf
+--- /dev/null
++++ b/config/__init__.py
+@@ -0,0 +1,134 @@
++"""Configuration management using Pydantic Settings."""
++from typing import Literal, Optional
++from pydantic import Field
++from pydantic_settings import BaseSettings, SettingsConfigDict
++
++
++class ModelConfig(BaseSettings):
++    """Model architecture configuration."""
++    model_config = SettingsConfigDict(
++        env_prefix="MODEL_",
++        env_file=".env",
++        env_file_encoding="utf-8",
++        extra="ignore"
++    )
++    
++    type: Literal["vit", "mamba"] = Field(
++        default="vit",
++        description="Model architecture: vit or mamba"
++    )
++    num_classes: int = Field(default=3, description="Number of output classes")
++    img_size: int = Field(default=224, description="Input image size")
++    pretrained: bool = Field(default=True, description="Use pretrained weights")
++    
++    # ViT specific
++    vit_patch_size: int = Field(default=16, description="ViT patch size")
++    vit_embed_dim: int = Field(default=768, description="ViT embedding dimension")
++    vit_depth: int = Field(default=12, description="ViT transformer depth")
++    vit_num_heads: int = Field(default=12, description="ViT number of attention heads")
++    
++    # Mamba specific  
++    mamba_d_model: int = Field(default=768, description="Mamba hidden dimension")
++    mamba_n_layer: int = Field(default=12, description="Mamba number of layers")
++    mamba_d_state: int = Field(default=16, description="Mamba state dimension")
++    mamba_d_conv: int = Field(default=4, description="Mamba convolution kernel size")
++    mamba_expand: int = Field(default=2, description="Mamba expansion factor")
++
++
++class TrainingConfig(BaseSettings):
++    """Training configuration."""
++    model_config = SettingsConfigDict(
++        env_prefix="TRAIN_",
++        env_file=".env",
++        env_file_encoding="utf-8",
++        extra="ignore"
++    )
++    
++    batch_size: int = Field(default=32, description="Training batch size")
++    num_epochs: int = Field(default=10, description="Number of training epochs")
++    learning_rate: float = Field(default=3e-4, description="Learning rate")
++    weight_decay: float = Field(default=1e-4, description="Weight decay")
++    num_workers: int = Field(default=4, description="DataLoader workers")
++    shuffle: bool = Field(default=True, description="Shuffle training data")
++    save_dir: str = Field(default="./checkpoints", description="Model checkpoint directory")
++    
++
++class DataConfig(BaseSettings):
++    """Data paths configuration."""
++    model_config = SettingsConfigDict(
++        env_prefix="DATA_",
++        env_file=".env",
++        env_file_encoding="utf-8",
++        extra="ignore"
++    )
++    
++    train_dir: str = Field(
++        default="/home/ubuntu/DETR/5.06组会/ChexRay/train/img",
++        description="Training data directory"
++    )
++    test_dir: str = Field(
++        default="/home/ubuntu/DETR/5.06组会/ChexRay/test/img",
++        description="Test data directory"
++    )
++    val_dir: Optional[str] = Field(
++        default=None,
++        description="Validation data directory (optional)"
++    )
++    
++
++class DeviceConfig(BaseSettings):
++    """Device configuration."""
++    model_config = SettingsConfigDict(
++        env_prefix="DEVICE_",
++        env_file=".env",
++        env_file_encoding="utf-8",
++        extra="ignore"
++    )
++    
++    type: Literal["cuda", "cpu", "auto"] = Field(
++        default="auto",
++        description="Device type: cuda, cpu, or auto"
++    )
++    
++    @property
++    def device(self) -> str:
++        """Get the actual device string."""
++        import torch
++        if self.type == "auto":
++            return "cuda" if torch.cuda.is_available() else "cpu"
++        return self.type
++
++
++class AppConfig(BaseSettings):
++    """Main application configuration aggregating all sub-configs."""
++    model_config = SettingsConfigDict(
++        env_file=".env",
++        env_file_encoding="utf-8",
++        extra="ignore"
++    )
++    
++    # Nested configs
++    model: ModelConfig = Field(default_factory=ModelConfig)
++    train: TrainingConfig = Field(default_factory=TrainingConfig)
++    data: DataConfig = Field(default_factory=DataConfig)
++    device: DeviceConfig = Field(default_factory=DeviceConfig)
++    
++    # App settings
++    seed: int = Field(default=42, description="Random seed")
++    debug: bool = Field(default=False, description="Debug mode")
++    
++    def __init__(self, **kwargs):
++        super().__init__(**kwargs)
++        # Set random seeds
++        import random
++        import numpy as np
++        import torch
++        random.seed(self.seed)
++        np.random.seed(self.seed)
++        torch.manual_seed(self.seed)
++        if torch.cuda.is_available():
++            torch.cuda.manual_seed_all(self.seed)
++
++
++# Global config instance
++config = AppConfig()
+diff --git a/models/__init__.py b/models/__init__.py
+new file mode 100644
+index 0000000..8ba7f7b
+--- /dev/null
++++ b/models/__init__.py
+@@ -0,0 +1,53 @@
++"""Base model interface and model factory."""
++import torch
++import torch.nn as nn
++from abc import ABC, abstractmethod
++from typing import Type
++
++from config import config
++
++
++class BaseClassifier(nn.Module, ABC):
++    """Base class for all disease classifiers."""
++    
++    def __init__(self, num_classes: int = 3, img_size: int = 224):
++        super().__init__()
++        self.num_classes = num_classes
++        self.img_size = img_size
++        
++    @abstractmethod
++    def get_backbone_output_dim(self) -> int:
++        """Return the output dimension of the backbone."""
++        pass
++    
++    def _build_classifier(self, input_dim: int) -> nn.Sequential:
++        """Build the classification head."""
++        return nn.Sequential(
++            nn.LayerNorm(input_dim),
++            nn.Linear(input_dim, 512),
++            nn.GELU(),
++            nn.Dropout(0.5),
++            nn.Linear(512, self.num_classes)
++        )
++
++
++def create_model(model_type: str = None, **kwargs) -> BaseClassifier:
++    """Factory function to create models."""
++    model_type = model_type or config.model.type
++    
++    if model_type == "vit":
++        from .vit_classifier import ViTClassifier
++        return ViTClassifier(
++            num_classes=kwargs.get("num_classes", config.model.num_classes),
++            img_size=kwargs.get("img_size", config.model.img_size),
++            pretrained=kwargs.get("pretrained", config.model.pretrained)
++        )
++    elif model_type == "mamba":
++        from .mamba_classifier import MambaClassifier
++        return MambaClassifier(
++            num_classes=kwargs.get("num_classes", config.model.num_classes),
++            img_size=kwargs.get("img_size", config.model.img_size),
++            pretrained=kwargs.get("pretrained", config.model.pretrained)
++        )
++    else:
++        raise ValueError(f"Unknown model type: {model_type}")
+diff --git a/models/mamba_classifier.py b/models/mamba_classifier.py
+new file mode 100644
+index 0000000..4b4d8e6
+--- /dev/null
++++ b/models/mamba_classifier.py
+@@ -0,0 +1,309 @@
++"""Vision Mamba (Vim) based disease classifier.
++
++A simplified Vision Mamba implementation using selective state space models.
++"""
++import math
++import torch
++import torch.nn as nn
++import torch.nn.functional as F
++from typing import Optional
++
++from config import config
++from . import BaseClassifier
++
++
++class SelectiveScanFn(torch.autograd.Function):
++    """Simplified selective scan operation for state space models."""
++    
++    @staticmethod
++    def forward(ctx, u, delta, A, B, C, D=None, delta_bias=None):
++        """Forward pass of selective scan.
++        
++        Args:
++            u: Input (B, L, N)
++            delta: Time step (B, L, N)
++            A: State matrix (N,)
++            B: Input-dependent transition (B, L, N)
++            C: Output matrix (B, L, N)
++            D: Skip connection (N,)
++            delta_bias: Bias for delta
++        """
++        # Simplified forward pass
++        ctx.save_for_backward(u, delta, A, B, C, D, delta_bias)
++        
++        batch, seq_len, dim = u.shape
++        
++        # Discretization
++        if delta_bias is not None:
++            delta = delta + delta_bias
++        delta = F.softplus(delta)
++        
++        # Simplified state update (forward Euler)
++        x = torch.zeros(batch, dim, device=u.device, dtype=u.dtype)
++        ys = []
++        
++        for i in range(seq_len):
++            # State update: x = exp(delta * A) * x + delta * B * u
++            dA = torch.exp(delta[:, i] * A)  # (B, N)
++            dB = delta[:, i] * B[:, i]  # (B, N)
++            
++            x = dA * x + dB * u[:, i]  # (B, N)
++            y = C[:, i] * x  # (B, N)
++            
++            if D is not None:
++                y = y + D * u[:, i]
++            
++            ys.append(y)
++        
++        y = torch.stack(ys, dim=1)  # (B, L, N)
++        return y
++    
++    @staticmethod
++    def backward(ctx, grad_output):
++        # Simplified backward - just return None for now
++        # In production, implement proper backward pass
++        return grad_output, None, None, None, None, None, None
++
++
++class MambaBlock(nn.Module):
++    """Single Mamba block with selective SSM."""
++    
++    def __init__(self, d_model: int, d_state: int = 16, d_conv: int = 4, expand: int = 2):
++        super().__init__()
++        self.d_model = d_model
++        self.d_state = d_state
++        self.d_conv = d_conv
++        self.expand = expand
++        self.d_inner = int(expand * d_model)
++        
++        # Input projection
++        self.in_proj = nn.Linear(d_model, self.d_inner * 2, bias=False)
++        
++        # Convolution layer
++        self.conv1d = nn.Conv1d(
++            self.d_inner,
++            self.d_inner,
++            kernel_size=d_conv,
++            padding=d_conv - 1,
++            groups=self.d_inner,
++            bias=True
++        )
++        
++        # SSM parameters
++        self.A_log = nn.Parameter(torch.log(torch.arange(1, d_state + 1)).repeat(self.d_inner, 1))
++        self.D = nn.Parameter(torch.ones(self.d_inner))
++        
++        # Output projection
++        self.out_proj = nn.Linear(self.d_inner, d_model, bias=False)
++        
++        # Delta (time step) projection
++        self.dt_proj = nn.Linear(self.d_inner, self.d_inner, bias=True)
++        
++        # B and C projections
++        self.x_proj = nn.Linear(self.d_inner, d_state * 2, bias=False)
++        
++        # Layer norm
++        self.norm = nn.LayerNorm(d_model)
++        
++    def forward(self, x: torch.Tensor) -> torch.Tensor:
++        """Forward pass.
++        
++        Args:
++            x: (B, L, D)
++        Returns:
++            (B, L, D)
++        """
++        batch, seq_len, dim = x.shape
++        
++        # Residual connection
++        residual = x
++        x = self.norm(x)
++        
++        # Input projection and split
++        x_and_gate = self.in_proj(x)  # (B, L, 2 * d_inner)
++        x_ssm, gate = x_and_gate.chunk(2, dim=-1)  # Each: (B, L, d_inner)
++        
++        # Apply activation to gate
++        gate = F.silu(gate)
++        
++        # Convolution
++        x_conv = self.conv1d(x_ssm.transpose(1, 2))[:, :, :seq_len].transpose(1, 2)  # (B, L, d_inner)
++        x_conv = F.silu(x_conv)
++        
++        # SSM parameters
++        A = -torch.exp(self.A_log)  # (d_inner, d_state)
++        
++        # Project to get B and C
++        x_proj_out = self.x_proj(x_conv)  # (B, L, 2 * d_state)
++        B, C = x_proj_out.chunk(2, dim=-1)  # Each: (B, L, d_state)
++        
++        # Compute delta
++        delta = self.dt_proj(x_conv)  # (B, L, d_inner)
++        
++        # Selective scan
++        # Simplified: use matrix multiplication approximation
++        y = self.selective_scan(x_conv, delta, A, B, C)
++        
++        # Gating
++        y = y * gate
++        
++        # Output projection
++        y = self.out_proj(y)
++        
++        # Residual
++        return y + residual
++    
++    def selective_scan(self, u, delta, A, B, C):
++        """Simplified selective scan without CUDA kernel."""
++        batch, seq_len, d_inner = u.shape
++        d_state = A.shape[1]
++        
++        # Discretize
++        delta = F.softplus(delta)
++        
++        # Simplified parallel scan approximation
++        # In practice, you'd use the CUDA kernel from mamba_ssm
++        
++        # Use cumulative sum approximation
++        dA = torch.exp(delta.unsqueeze(-1) * A)  # (B, L, d_inner, d_state)
++        dB = delta.unsqueeze(-1) * B.unsqueeze(2)  # (B, L, d_inner, d_state)
++        
++        # State evolution (simplified)
++        x = torch.zeros(batch, d_inner, d_state, device=u.device, dtype=u.dtype)
++        ys = []
++        
++        for i in range(seq_len):
++            x = dA[:, i] * x + dB[:, i] * u[:, i].unsqueeze(-1)
++            y = (C[:, i].unsqueeze(1) * x).sum(dim=-1)
++            ys.append(y)
++        
++        y = torch.stack(ys, dim=1)
++        
++        # Add skip connection
++        y = y + self.D * u
++        
++        return y
++
++
++class VisionMambaBackbone(nn.Module):
++    """Vision Mamba backbone similar to ViT architecture."""
++    
++    def __init__(
++        self,
++        img_size: int = 224,
++        patch_size: int = 16,
++        in_chans: int = 3,
++        d_model: int = 768,
++        n_layer: int = 12,
++        d_state: int = 16,
++        d_conv: int = 4,
++        expand: int = 2
++    ):
++        super().__init__()
++        self.img_size = img_size
++        self.patch_size = patch_size
++        self.d_model = d_model
++        
++        # Patch embedding
++        self.patch_embed = nn.Conv2d(
++            in_chans, d_model,
++            kernel_size=patch_size,
++            stride=patch_size
++        )
++        
++        # Calculate number of patches
++        self.num_patches = (img_size // patch_size) ** 2
++        
++        # CLS token
++        self.cls_token = nn.Parameter(torch.zeros(1, 1, d_model))
++        
++        # Position embedding
++        self.pos_embed = nn.Parameter(torch.zeros(1, self.num_patches + 1, d_model))
++        
++        # Dropout
++        self.pos_drop = nn.Dropout(0.1)
++        
++        # Mamba blocks
++        self.blocks = nn.ModuleList([
++            MambaBlock(d_model, d_state, d_conv, expand)
++            for _ in range(n_layer)
++        ])
++        
++        # Final layer norm
++        self.norm = nn.LayerNorm(d_model)
++        
++        # Initialize
++        nn.init.normal_(self.cls_token, std=0.02)
++        nn.init.normal_(self.pos_embed, std=0.02)
++        
++    def forward(self, x: torch.Tensor) -> torch.Tensor:
++        """
++        Args:
++            x: (B, C, H, W)
++        Returns:
++            (B, L, D) where L = num_patches + 1 (CLS token)
++        """
++        batch = x.shape[0]
++        
++        # Patch embedding
++        x = self.patch_embed(x)  # (B, d_model, H/P, W/P)
++        x = x.flatten(2).transpose(1, 2)  # (B, num_patches, d_model)
++        
++        # Add CLS token
++        cls_tokens = self.cls_token.expand(batch, -1, -1)  # (B, 1, d_model)
++        x = torch.cat((cls_tokens, x), dim=1)  # (B, num_patches+1, d_model)
++        
++        # Add position embedding
++        x = x + self.pos_embed
++        x = self.pos_drop(x)
++        
++        # Apply Mamba blocks
++        for block in self.blocks:
++            x = block(x)
++        
++        x = self.norm(x)
++        return x
++
++
++class MambaClassifier(BaseClassifier):
++    """Vision Mamba based classifier for chest X-ray classification."""
++    
++    def __init__(self, num_classes: int = 3, img_size: int = 224, pretrained: bool = True):
++        super().__init__(num_classes, img_size)
++        
++        # Vision Mamba backbone
++        self.backbone = VisionMambaBackbone(
++            img_size=img_size,
++            patch_size=16,
++            in_chans=3,
++            d_model=config.model.mamba_d_model,
++            n_layer=config.model.mamba_n_layer,
++            d_state=config.model.mamba_d_state,
++            d_conv=config.model.mamba_d_conv,
++            expand=config.model.mamba_expand
++        )
++        
++        # Classification head
++        self.classifier = self._build_classifier(config.model.mamba_d_model)
++        
++        if pretrained:
++            # Note: Vision Mamba pretrained weights not available in this simplified version
++            # Would load from checkpoint in production
++            pass
++    
++    def get_backbone_output_dim(self) -> int:
++        return config.model.mamba_d_model
++    
++    def forward(self, x: torch.Tensor) -> torch.Tensor:
++        """
++        Args:
++            x: (B, C, H, W)
++        Returns:
++            (B, num_classes)
++        """
++        # Get features from backbone
++        x = self.backbone(x)  # (B, L, D)
++        # Extract CLS token
++        cls_token = x[:, 0]  # (B, D)
++        # Pass through classifier
++        return self.classifier(cls_token)
+diff --git a/models/vit_classifier.py b/models/vit_classifier.py
+new file mode 100644
+index 0000000..7b2aa57
+--- /dev/null
++++ b/models/vit_classifier.py
+@@ -0,0 +1,60 @@
++"""ViT-based disease classifier."""
++import torch
++import torch.nn as nn
++from transformers import ViTForImageClassification
++
++from config import config
++from . import BaseClassifier
++
++
++class ViTClassifier(BaseClassifier):
++    """Vision Transformer based classifier for chest X-ray classification."""
++    
++    def __init__(self, num_classes: int = 3, img_size: int = 224, pretrained: bool = True):
++        super().__init__(num_classes, img_size)
++        
++        # Load pretrained ViT from HuggingFace
++        if pretrained:
++            # Try to load local pretrained model, fallback to default
++            try:
++                self.vit = ViTForImageClassification.from_pretrained(
++                    '/home/ubuntu/DETR/vit/vit_hg'
++                )
++            except (OSError, ValueError):
++                # Fallback to default pretrained ViT
++                self.vit = ViTForImageClassification.from_pretrained(
++                    'google/vit-base-patch16-224',
++                    num_labels=num_classes,
++                    ignore_mismatched_sizes=True
++                )
++            # Freeze backbone
++            for param in self.vit.parameters():
++                param.requires_grad = False
++        else:
++            self.vit = ViTForImageClassification.from_pretrained(
++                'google/vit-base-patch16-224',
++                num_labels=num_classes,
++                ignore_mismatched_sizes=True
++            )
++        
++        # Build custom classifier head
++        self.classifier = self._build_classifier(768)
++        
++    def get_backbone_output_dim(self) -> int:
++        return 768
++    
++    def forward(self, x: torch.Tensor) -> torch.Tensor:
++        """Forward pass.
++        
++        Args:
++            x: Input tensor of shape (B, C, H, W)
++            
++        Returns:
++            Logits tensor of shape (B, num_classes)
++        """
++        # Get features from ViT backbone
++        x = self.vit.vit(x).last_hidden_state
++        # Extract CLS token
++        cls_token = x[:, 0]
++        # Pass through classifier
++        return self.classifier(cls_token)
+diff --git a/requirements.txt b/requirements.txt
+new file mode 100644
+index 0000000..9a17c45
+--- /dev/null
++++ b/requirements.txt
+@@ -0,0 +1,22 @@
++# Core
++torch>=2.0.0
++torchvision>=0.15.0
++
++# Models
++transformers>=4.30.0
++timm>=0.9.0
++
++# Configuration
++pydantic>=2.0.0
++pydantic-settings>=2.0.0
++
++# ML utilities
++numpy>=1.24.0
++scikit-learn>=1.3.0
++
++# Data processing
++Pillow>=10.0.0
++
++# Optional: For full Mamba support
++# mamba-ssm>=1.1.0
++# causal-conv1d>=1.1.0
+diff --git a/scripts/inference.py b/scripts/inference.py
+new file mode 100644
+index 0000000..49ee6be
+--- /dev/null
++++ b/scripts/inference.py
+@@ -0,0 +1,79 @@
++#!/usr/bin/env python3
++"""Inference script for chest X-ray classification.
++
++Usage:
++    # Predict single image
++    python scripts/inference.py --image /path/to/image.jpg
++    
++    # Predict with specific checkpoint
++    python scripts/inference.py --image /path/to/image.jpg --checkpoint checkpoints/best_vit.pth
++    
++    # Predict with Mamba
++    MODEL_TYPE=mamba python scripts/inference.py --image /path/to/image.jpg
++"""
++import sys
++sys.path.insert(0, '/home/node/.openclaw/workspace/ChestXray-classification')
++
++import argparse
++from PIL import Image
++
++from config import config
++from models import create_model
++from utils import test_transform, Predictor
++
++
++def main():
++    """Main inference function."""
++    parser = argparse.ArgumentParser(description="Chest X-ray Classification Inference")
++    parser.add_argument("--image", type=str, required=True, help="Path to input image")
++    parser.add_argument("--checkpoint", type=str, default=None, help="Path to model checkpoint")
++    args = parser.parse_args()
++    
++    print("=" * 60)
++    print("Chest X-ray Classification - Inference")
++    print("=" * 60)
++    print(f"Model: {config.model.type}")
++    print(f"Device: {config.device.device}")
++    print("=" * 60)
++    print()
++    
++    # Load image
++    print(f"Loading image: {args.image}")
++    image = Image.open(args.image).convert('RGB')
++    
++    # Preprocess
++    image_tensor = test_transform(image)
++    
++    # Create model
++    model = create_model()
++    
++    # Load checkpoint if provided
++    if args.checkpoint:
++        import torch
++        checkpoint = torch.load(args.checkpoint, map_location=config.device.device)
++        model.load_state_dict(checkpoint["model_state_dict"])
++        print(f"Loaded checkpoint: {args.checkpoint}")
++    
++    # Create predictor
++    predictor = Predictor(model)
++    
++    # Predict
++    print("Predicting...")
++    result = predictor.predict(image_tensor)
++    
++    print()
++    print("=" * 60)
++    print("Prediction Result")
++    print("=" * 60)
++    print(f"Predicted Class: {result['label']}")
++    print(f"Confidence: {result['confidence']:.4f}")
++    print()
++    print("Class Probabilities:")
++    for label, prob in result['probabilities'].items():
++        bar = "█" * int(prob * 30)
++        print(f"  {label:12s}: {prob:.4f} {bar}")
++    print("=" * 60)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/scripts/train.py b/scripts/train.py
+new file mode 100644
+index 0000000..6b7af1a
+--- /dev/null
++++ b/scripts/train.py
+@@ -0,0 +1,76 @@
++#!/usr/bin/env python3
++"""Training script for chest X-ray classification.
++
++Usage:
++    # Train with default settings (ViT)
++    python scripts/train.py
++    
++    # Train with Mamba
++    MODEL_TYPE=mamba python scripts/train.py
++    
++    # Train with custom config
++    MODEL_TYPE=vit TRAIN_NUM_EPOCHS=20 python scripts/train.py
++"""
++import sys
++sys.path.insert(0, '/home/node/.openclaw/workspace/ChestXray-classification')
++
++from config import config
++from models import create_model
++from utils import create_dataloaders, Trainer
++
++
++def main():
++    """Main training function."""
++    # Print configuration
++    print("=" * 60)
++    print("Chest X-ray Classification - Training")
++    print("=" * 60)
++    print(f"Model: {config.model.type}")
++    print(f"Device: {config.device.device}")
++    print(f"Data dir: {config.data.train_dir}")
++    print("=" * 60)
++    print()
++    
++    # Create model
++    model = create_model()
++    
++    # Print model info
++    total_params = sum(p.numel() for p in model.parameters())
++    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
++    print(f"Total parameters: {total_params:,}")
++    print(f"Trainable parameters: {trainable_params:,}")
++    print()
++    
++    # Create dataloaders
++    train_loader, test_loader, val_loader = create_dataloaders()
++    
++    # Print dataset info
++    print(f"Training samples: {len(train_loader.dataset)}")
++    print(f"Validation samples: {len(val_loader.dataset)}")
++    print(f"Test samples: {len(test_loader.dataset)}")
++    print(f"Class distribution: {train_loader.dataset.get_class_distribution()}")
++    print()
++    
++    # Create trainer
++    trainer = Trainer(model)
++    
++    # Train
++    history = trainer.train(train_loader, val_loader)
++    
++    # Final evaluation on test set
++    print("=" * 60)
++    print("Final Test Set Evaluation")
++    print("=" * 60)
++    test_metrics = trainer.evaluate(test_loader)
++    print(f"Test Loss: {test_metrics['loss']:.4f}")
++    print(f"Test Accuracy: {test_metrics['accuracy']:.4f}")
++    print(f"Test Precision: {test_metrics['precision']:.4f}")
++    print(f"Test Recall: {test_metrics['recall']:.4f}")
++    print(f"Test F1 Score: {test_metrics['f1']:.4f}")
++    
++    print()
++    print("Training complete!")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/scripts/validate.py b/scripts/validate.py
+new file mode 100644
+index 0000000..8436f23
+--- /dev/null
++++ b/scripts/validate.py
+@@ -0,0 +1,68 @@
++#!/usr/bin/env python3
++"""Validation script for chest X-ray classification.
++
++Usage:
++    # Validate default model
++    python scripts/validate.py
++    
++    # Validate specific checkpoint
++    python scripts/validate.py --checkpoint checkpoints/best_vit.pth
++    
++    # Validate Mamba model
++    MODEL_TYPE=mamba python scripts/validate.py
++"""
++import sys
++sys.path.insert(0, '/home/node/.openclaw/workspace/ChestXray-classification')
++
++from config import config
++from models import create_model
++from utils import create_dataloaders, Trainer
++
++
++def main():
++    """Main validation function."""
++    print("=" * 60)
++    print("Chest X-ray Classification - Validation")
++    print("=" * 60)
++    print(f"Model: {config.model.type}")
++    print(f"Device: {config.device.device}")
++    print("=" * 60)
++    print()
++    
++    # Create model
++    model = create_model()
++    
++    # Create trainer (for loading checkpoint)
++    trainer = Trainer(model)
++    
++    # Try to load best checkpoint
++    checkpoint_name = f"best_{config.model.type}.pth"
++    try:
++        trainer.load_checkpoint(checkpoint_name)
++    except FileNotFoundError:
++        print(f"Warning: Checkpoint {checkpoint_name} not found")
++        print("Using randomly initialized model")
++        print()
++    
++    # Create dataloaders
++    _, test_loader, _ = create_dataloaders()
++    
++    # Evaluate
++    print(f"Evaluating on {len(test_loader.dataset)} test samples...")
++    print()
++    
++    metrics = trainer.evaluate(test_loader)
++    
++    print("=" * 60)
++    print("Test Set Results")
++    print("=" * 60)
++    print(f"Loss:      {metrics['loss']:.4f}")
++    print(f"Accuracy:  {metrics['accuracy']:.4f}")
++    print(f"Precision: {metrics['precision']:.4f}")
++    print(f"Recall:    {metrics['recall']:.4f}")
++    print(f"F1 Score:  {metrics['f1']:.4f}")
++    print("=" * 60)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/test.py b/test.py
+deleted file mode 100644
+index e0781c8..0000000
+--- a/test.py
++++ /dev/null
+@@ -1,20 +0,0 @@
+-from Vit import VisionTransformer
+-import torch
+-from model import CatDogClassifier
+-from PIL import Image
+-from datahelper import transform,test_transform
+-d = {0:"cat", 1:"dog"}  
+-print('cuda' if torch.cuda.is_available() else 'cpu')
+-model = CatDogClassifier(num_classes=2, img_size=224)
+-model.load_state_dict(torch.load('cat_dog_model.pth'))
+-model.eval()
+-img = Image.open("/home/ubuntu/DETR/5.06组会/cat_dog/cat/cat.0.jpg").convert('RGB')
+-img = test_transform(img).unsqueeze(0)  # 添加batch维度
+-
+-img = img.to('cuda' if torch.cuda.is_available() else 'cpu')
+-model = model.to('cuda' if torch.cuda.is_available() else 'cpu')
+-with torch.no_grad():
+-    output = model(img)
+-    _, predicted = torch.max(output, 1)
+-    print(output)
+-    print(f'Predicted class: {d[predicted.item()]}')
+\ No newline at end of file
+diff --git a/utils/__init__.py b/utils/__init__.py
+new file mode 100644
+index 0000000..cc485c1
+--- /dev/null
++++ b/utils/__init__.py
+@@ -0,0 +1,13 @@
++"""Utility functions and classes."""
++from .data import ChestDataset, create_dataloaders, train_transform, test_transform, DISEASE_LABELS
++from .training import Trainer, Predictor
++
++__all__ = [
++    "ChestDataset",
++    "create_dataloaders",
++    "train_transform",
++    "test_transform",
++    "DISEASE_LABELS",
++    "Trainer",
++    "Predictor"
++]
+diff --git a/utils/data.py b/utils/data.py
+new file mode 100644
+index 0000000..fe4bfdc
+--- /dev/null
++++ b/utils/data.py
+@@ -0,0 +1,160 @@
++"""Data loading and preprocessing utilities."""
++import os
++import random
++from typing import List, Tuple
++from PIL import Image
++
++import torch
++from torch.utils.data import Dataset
++from torchvision import transforms
++
++from config import config
++
++
++# Disease label mapping
++DISEASE_LABELS = {
++    "BACTERIA": 0,
++    "NORMAL": 1,
++    "VIRUS": 2
++}
++
++
++def get_files(path: str) -> List[str]:
++    """Recursively get all files in directory."""
++    files = []
++    for root, _, filenames in os.walk(path):
++        for filename in filenames:
++            if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
++                files.append(os.path.join(root, filename))
++    return files
++
++
++def get_data(images_name: List[str], label: str) -> List[Tuple[str, int]]:
++    """Filter images by label and return (path, label) tuples."""
++    to_return = []
++    for img_name in images_name:
++        if label in os.path.basename(img_name).upper():
++            to_return.append((img_name, DISEASE_LABELS[label]))
++    return to_return
++
++
++# Training data augmentation
++train_transform = transforms.Compose([
++    transforms.RandomResizedCrop(config.model.img_size, scale=(0.6, 1.0)),
++    transforms.RandomHorizontalFlip(p=0.5),
++    transforms.RandomRotation(degrees=10),
++    transforms.ColorJitter(brightness=0.2, contrast=0.2),
++    transforms.ToTensor(),
++    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
++])
++
++# Test/validation transform (no augmentation)
++test_transform = transforms.Compose([
++    transforms.Resize((config.model.img_size, config.model.img_size)),
++    transforms.ToTensor(),
++    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
++])
++
++
++class ChestDataset(Dataset):
++    """Chest X-ray dataset for pneumonia classification."""
++    
++    def __init__(self, root_dir: str, transform=None, split: str = "train"):
++        """
++        Args:
++            root_dir: Root directory containing images
++            transform: Optional transform to apply
++            split: Dataset split ("train" or "test")
++        """
++        self.root_dir = root_dir
++        self.transform = transform
++        self.split = split
++        
++        # Get all images
++        self.images = get_files(root_dir)
++        
++        # Build dataset
++        self.data = []
++        for disease in DISEASE_LABELS.keys():
++            self.data += get_data(self.images, disease)
++        
++        # Shuffle for training
++        if split == "train":
++            random.shuffle(self.data)
++    
++    def __len__(self) -> int:
++        return len(self.data)
++    
++    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
++        img_path, label = self.data[idx]
++        image = Image.open(img_path).convert('RGB')
++        
++        if self.transform:
++            image = self.transform(image)
++        
++        return image, label
++    
++    def get_class_distribution(self) -> dict:
++        """Get distribution of classes in dataset."""
++        dist = {label: 0 for label in DISEASE_LABELS.keys()}
++        for _, label in self.data:
++            for name, idx in DISEASE_LABELS.items():
++                if idx == label:
++                    dist[name] += 1
++        return dist
++
++
++def create_dataloaders():
++    """Create train and test dataloaders from config."""
++    from torch.utils.data import DataLoader
++    
++    # Training dataset
++    train_dataset = ChestDataset(
++        root_dir=config.data.train_dir,
++        transform=train_transform,
++        split="train"
++    )
++    
++    # Test dataset
++    test_dataset = ChestDataset(
++        root_dir=config.data.test_dir,
++        transform=test_transform,
++        split="test"
++    )
++    
++    # Validation dataset (if provided, else use test)
++    if config.data.val_dir:
++        val_dataset = ChestDataset(
++            root_dir=config.data.val_dir,
++            transform=test_transform,
++            split="val"
++        )
++    else:
++        val_dataset = test_dataset
++    
++    # DataLoaders
++    train_loader = DataLoader(
++        train_dataset,
++        batch_size=config.train.batch_size,
++        shuffle=config.train.shuffle,
++        num_workers=config.train.num_workers,
++        pin_memory=True
++    )
++    
++    test_loader = DataLoader(
++        test_dataset,
++        batch_size=config.train.batch_size,
++        shuffle=False,
++        num_workers=config.train.num_workers,
++        pin_memory=True
++    )
++    
++    val_loader = DataLoader(
++        val_dataset,
++        batch_size=config.train.batch_size,
++        shuffle=False,
++        num_workers=config.train.num_workers,
++        pin_memory=True
++    )
++    
++    return train_loader, test_loader, val_loader
+diff --git a/utils/training.py b/utils/training.py
+new file mode 100644
+index 0000000..ef31722
+--- /dev/null
++++ b/utils/training.py
+@@ -0,0 +1,272 @@
++"""Training and evaluation utilities."""
++import os
++from typing import Dict, List
++import time
++
++import torch
++import torch.nn as nn
++from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
++
++from config import config
++
++
++class Trainer:
++    """Training manager for chest X-ray classification."""
++    
++    def __init__(self, model, device=None):
++        """
++        Args:
++            model: PyTorch model
++            device: Device to train on
++        """
++        self.model = model
++        self.device = device or config.device.device
++        self.model.to(self.device)
++        
++        # Create save directory
++        os.makedirs(config.train.save_dir, exist_ok=True)
++        
++        # Initialize optimizer
++        self.optimizer = torch.optim.AdamW(
++            self.model.parameters(),
++            lr=config.train.learning_rate,
++            weight_decay=config.train.weight_decay
++        )
++        
++        # Loss function
++        self.criterion = nn.CrossEntropyLoss()
++        
++        # Training history
++        self.history = {
++            "train_loss": [],
++            "val_metrics": []
++        }
++    
++    def train_epoch(self, dataloader) -> float:
++        """Train for one epoch.
++        
++        Returns:
++            Average loss for the epoch
++        """
++        self.model.train()
++        total_loss = 0.0
++        num_batches = 0
++        
++        for images, labels in dataloader:
++            images = images.to(self.device)
++            labels = labels.to(self.device)
++            
++            # Forward pass
++            self.optimizer.zero_grad()
++            outputs = self.model(images)
++            loss = self.criterion(outputs, labels)
++            
++            # Backward pass
++            loss.backward()
++            self.optimizer.step()
++            
++            total_loss += loss.item()
++            num_batches += 1
++            
++            if config.debug:
++                print(f"  Batch {num_batches}, Loss: {loss.item():.4f}")
++        
++        return total_loss / num_batches
++    
++    @torch.no_grad()
++    def evaluate(self, dataloader) -> Dict[str, float]:
++        """Evaluate model on validation/test set.
++        
++        Returns:
++            Dictionary of metrics
++        """
++        self.model.eval()
++        all_preds = []
++        all_labels = []
++        total_loss = 0.0
++        num_batches = 0
++        
++        for images, labels in dataloader:
++            images = images.to(self.device)
++            labels = labels.to(self.device)
++            
++            # Forward pass
++            outputs = self.model(images)
++            loss = self.criterion(outputs, labels)
++            
++            # Predictions
++            preds = torch.argmax(outputs, dim=1)
++            
++            all_preds.extend(preds.cpu().numpy())
++            all_labels.extend(labels.cpu().numpy())
++            
++            total_loss += loss.item()
++            num_batches += 1
++        
++        # Calculate metrics
++        metrics = {
++            "loss": total_loss / num_batches,
++            "accuracy": accuracy_score(all_labels, all_preds),
++            "precision": precision_score(
++                all_labels, all_preds, average='macro', zero_division=0
++            ),
++            "recall": recall_score(
++                all_labels, all_preds, average='macro', zero_division=0
++            ),
++            "f1": f1_score(
++                all_labels, all_preds, average='macro', zero_division=0
++            )
++        }
++        
++        return metrics
++    
++    def train(self, train_loader, val_loader) -> Dict:
++        """Full training loop.
++        
++        Returns:
++            Training history
++        """
++        print(f"Training on device: {self.device}")
++        print(f"Model type: {config.model.type}")
++        print(f"Epochs: {config.train.num_epochs}")
++        print(f"Batch size: {config.train.batch_size}")
++        print(f"Learning rate: {config.train.learning_rate}")
++        print("-" * 50)
++        
++        best_f1 = 0.0
++        
++        for epoch in range(config.train.num_epochs):
++            start_time = time.time()
++            
++            # Train
++            train_loss = self.train_epoch(train_loader)
++            self.history["train_loss"].append(train_loss)
++            
++            # Validate
++            val_metrics = self.evaluate(val_loader)
++            self.history["val_metrics"].append(val_metrics)
++            
++            epoch_time = time.time() - start_time
++            
++            # Print progress
++            print(f"Epoch [{epoch+1}/{config.train.num_epochs}] - {epoch_time:.1f}s")
++            print(f"  Train Loss: {train_loss:.4f}")
++            print(f"  Val Loss: {val_metrics['loss']:.4f}")
++            print(f"  Accuracy: {val_metrics['accuracy']:.4f}")
++            print(f"  Precision: {val_metrics['precision']:.4f}")
++            print(f"  Recall: {val_metrics['recall']:.4f}")
++            print(f"  F1 Score: {val_metrics['f1']:.4f}")
++            
++            # Save best model
++            if val_metrics["f1"] > best_f1:
++                best_f1 = val_metrics["f1"]
++                self.save_checkpoint(f"best_{config.model.type}.pth")
++                print(f"  ✓ Saved best model (F1: {best_f1:.4f})")
++            
++            print()
++        
++        # Save final model
++        self.save_checkpoint(f"final_{config.model.type}.pth")
++        
++        return self.history
++    
++    def save_checkpoint(self, filename: str):
++        """Save model checkpoint."""
++        path = os.path.join(config.train.save_dir, filename)
++        torch.save({
++            "model_state_dict": self.model.state_dict(),
++            "optimizer_state_dict": self.optimizer.state_dict(),
++            "config": config.model.dict(),
++            "history": self.history
++        }, path)
++    
++    def load_checkpoint(self, filename: str):
++        """Load model checkpoint."""
++        path = os.path.join(config.train.save_dir, filename)
++        checkpoint = torch.load(path, map_location=self.device)
++        self.model.load_state_dict(checkpoint["model_state_dict"])
++        self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
++        self.history = checkpoint.get("history", {"train_loss": [], "val_metrics": []})
++        print(f"Loaded checkpoint from {path}")
++
++
++class Predictor:
++    """Inference manager for chest X-ray classification."""
++    
++    # Class labels
++    LABELS = {0: "BACTERIA", 1: "NORMAL", 2: "VIRUS"}
++    
++    def __init__(self, model, device=None):
++        """
++        Args:
++            model: PyTorch model
++            device: Device to run inference on
++        """
++        self.model = model
++        self.device = device or config.device.device
++        self.model.to(self.device)
++        self.model.eval()
++    
++    @torch.no_grad()
++    def predict(self, image_tensor: torch.Tensor) -> Dict:
++        """Predict single image.
++        
++        Args:
++            image_tensor: Preprocessed image tensor (C, H, W) or (1, C, H, W)
++            
++        Returns:
++            Dictionary with prediction and probabilities
++        """
++        # Add batch dimension if needed
++        if image_tensor.dim() == 3:
++            image_tensor = image_tensor.unsqueeze(0)
++        
++        image_tensor = image_tensor.to(self.device)
++        
++        # Forward pass
++        output = self.model(image_tensor)
++        probabilities = torch.softmax(output, dim=1)
++        prediction = torch.argmax(output, dim=1).item()
++        
++        return {
++            "label": self.LABELS[prediction],
++            "class_idx": prediction,
++            "confidence": probabilities[0, prediction].item(),
++            "probabilities": {
++                label: prob.item()
++                for label, prob in zip(self.LABELS.values(), probabilities[0])
++            }
++        }
++    
++    @torch.no_grad()
++    def predict_batch(self, dataloader) -> List[Dict]:
++        """Predict batch of images.
++        
++        Args:
++            dataloader: DataLoader with images
++            
++        Returns:
++            List of prediction dictionaries
++        """
++        results = []
++        for images, _ in dataloader:
++            images = images.to(self.device)
++            outputs = self.model(images)
++            probabilities = torch.softmax(outputs, dim=1)
++            predictions = torch.argmax(outputs, dim=1)
++            
++            for i in range(len(predictions)):
++                pred = predictions[i].item()
++                results.append({
++                    "label": self.LABELS[pred],
++                    "class_idx": pred,
++                    "confidence": probabilities[i, pred].item(),
++                    "probabilities": {
++                        label: prob.item()
++                        for label, prob in zip(
++                            self.LABELS.values(), probabilities[i]
++                        )
++                    }
++                })
++        
++        return results
+-- 
+2.39.5
+
