@@ -1,0 +1,22 @@
+# Core
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Models
+transformers>=4.30.0
+timm>=0.9.0
+
+# Configuration
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+
+# ML utilities
+numpy>=1.24.0
+scikit-learn>=1.3.0
+
+# Data processing
+Pillow>=10.0.0
+
+# Optional: For full Mamba support
+# mamba-ssm>=1.1.0
+# causal-conv1d>=1.1.0
