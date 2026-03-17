@@ -145,13 +145,6 @@ python scripts/benchmark.py --epochs 5 --export
 python scripts/benchmark.py --compare-only --export
 ```
 
-**输出示例:**
-
-| Model | Params (M) | FLOPs (G) | Train Time (min) | Inference (ms) | Accuracy | F1 Score |
-|-------|-----------|-----------|------------------|----------------|----------|----------|
-| VIT   | 86.5      | 17.5      | 45.2            | 23.5           | 0.9234   | 0.9187   |
-| MAMBA | 85.2      | 16.8      | 42.1            | 18.3           | 0.9256   | 0.9213   |
-
 ### ⚙️ 配置说明
 
 所有配置通过环境变量或 `.env` 文件管理:
@@ -167,16 +160,6 @@ python scripts/benchmark.py --compare-only --export
 | `DATA_TRAIN_DIR` | 训练数据目录 | - |
 | `DATA_TEST_DIR` | 测试数据目录 | - |
 | `DEVICE_TYPE` | 设备: `cuda` / `cpu` / `auto` | `auto` |
-
-### 🧪 实验结果
-
-在 ZhangLab Chest X-Ray 数据集上的实验结果:
-
-| 模型 | 参数量 | Top-1 Acc | Precision | Recall | F1 Score |
-|------|--------|-----------|-----------|--------|----------|
-| ResNet-50 (基线) | 25.6M | 0.8912 | 0.8843 | 0.8798 | 0.8821 |
-| **ViT-Base** | 86.4M | **0.9234** | 0.9187 | 0.9156 | **0.9172** |
-| **Vision Mamba** | 85.2M | **0.9256** | **0.9213** | **0.9198** | **0.9206** |
 
 ### 🏗️ 架构对比
 
